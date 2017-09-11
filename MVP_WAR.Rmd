@@ -1,0 +1,110 @@
+---
+title: "Assessing MVP Votes by WAR"
+author: "Dean Wise"
+date: "8/7/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+war_file <- "~/Desktop/R Scripts/Personal/Underrated/war_daily_bat.csv"
+```
+
+WAR (Wins Above Replacement) is often looked at as a standardized measure of a baseball players contributions: The higher the WAR the higher the value they represent for the team. While WAR has its limitations, we are going to look at how it compares to a players MVP votes during that season. Mores pecifically, we are going to look at WAR compared to the share of MVP votes (total votes earned / total possible votes earned) 
+
+
+First we are going to load relevant packages and then load in our WAR data from Baseball Reference (http://www.baseball-reference.com/data/war_daily_bat.txt)
+
+```{r load_war, message=FALSE, warning=FALSE}
+needs(tidyverse, Lahman, DT, lubridate, plotly)
+#Note I have already saved down the War file onto my local machine
+war <- read_csv(war_file)
+#Lets see a random sample of the data table
+datatable(sample_n(war, 50))
+```
+***
+
+Let's now clean up the file and take the relevant columns we need:
+```{r clean_war}
+clean_war <- war %>% 
+  select(player_ID, name_common, year_ID, team_ID, WAR)
+#Take a look at what we now have
+datatable(sample_n(clean_war, 5))
+```
+
+***
+
+Next, Lets try to gather a list of all MVP winners from the AwardsPlayers table in the Lahman database. We are going to try and get the PlayerID, the Year, and then add in a column where we indicate they won the award that year
+```{r mvp_winners}
+data(AwardsPlayers)
+won <- AwardsPlayers %>% 
+  filter(awardID == "Most Valuable Player") %>% 
+  select(playerID, yearID) %>% 
+  mutate(Won = "Won")
+datatable(won)
+```
+
+***
+
+Let's try to remove pitchers since their WAR does not really match those of a non-pitcher:
+```{r pitcher_list}
+data(Pitching)
+pitchers <- Pitching %>% 
+  group_by(playerID) %>% 
+  summarise(games = sum(G)) %>% 
+  filter(games>=5)
+pitchers <- pitchers$playerID
+```
+
+
+Now, lets build a table that brings in the MVP votes for each player and joins that with the WAR for that year, along with if they won an MVP award or not
+
+```{r build_main}
+data(AwardsSharePlayers)
+mvp <- AwardsSharePlayers %>% 
+  filter(awardID == "MVP") %>% 
+  select(playerID, yearID, lgID, pointsWon, pointsMax, votesFirst) %>% 
+  left_join(clean_war, by = c("playerID" = "player_ID", "yearID" = "year_ID")) %>% 
+  left_join(won, by = c("playerID" = "playerID", "yearID" = "yearID")) %>% 
+  mutate(Won = if_else(is.na(Won) == TRUE, "Did not Win MVP", "Won MVP"), 
+         Player = paste(name_common, " - ", as.character(yearID), " (", team_ID, ")", sep = ""), 
+         Share_of_Vote = pointsWon/pointsMax) %>% 
+  filter(!(playerID %in% pitchers)) %>% 
+  select(Player, yearID, lgID, WAR, Share_of_Vote, Won) %>% 
+  filter(is.na(WAR) == FALSE & yearID >=1980) %>% 
+  mutate(WAR = as.double(WAR), 
+         Share_of_Vote = as.double(Share_of_Vote))
+
+datatable(mvp)
+```
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+war <- NULL
+clean_war <- NULL
+won <- NULL
+```
+
+***
+
+Lets plot these players:
+
+```{r plotly, message=FALSE, warning=FALSE}
+p <- plot_ly(mvp, x = ~WAR, y = ~Share_of_Vote, type = "scatter", text = ~Player, color = ~Won, width = 1100, height = 500)
+p
+```
+
+***
+
+Findings
+---
+
+Some things that immidiately stand out:
+
+* Barry Bonds was an insane baseball specimen in the early 2000's.
+
+* Mike Trout in 2012 was the most deserving MVP to not earn one with a WAR of 10.75.
+
+* The Big Hurt (Frank Thomas) earned himself 100% of the votes in '93 yet had a surprisingly low WAR of just over 6. 
+
+* Cal Ripken had a share of Vote of 0.2% in '84 despite having a WAR of 10
+
